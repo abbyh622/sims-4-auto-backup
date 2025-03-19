@@ -10,13 +10,11 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
-#                   make copy of folder before testing
-
-#                   add progress bar for each folder
+# make 'saves', 'Tray', 'Mods' global or something, currently weird
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 ACCT_DATA_FILE = "accountDataDB.package"
-DEFAULT_CONFIGS = {"gameDir": "C:\\Users\\abbyh\\Documents\\Electronic Arts\\The Sims 4", "items": {"backupSaves": True, "backupTray": False, "backupAccountData": True, "backupMods": False}}
+DEFAULT_CONFIGS = {"gameDir": "C:\\Users\\abbyh\\Documents\\Electronic Arts\\The Sims 4", "items": {"saves": True, "Tray": False, "accountDataDB": True, "Mods": False}}
 creds = None
 gameDir = os.path.expanduser("~\\Documents\\Electronic Arts\\The Sims 4")   # default game directory, should be universal i think
 
@@ -32,7 +30,6 @@ clearLine = "\033[K"    # clears from cursor to end of line, prevent overlapping
 def main():
     global creds
     global gameDir
-
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     creds = authenticateGoogleDrive()
@@ -65,18 +62,17 @@ def main():
             file = service.files().create(body=metadata, fields="id").execute()
             folderId = file.get("id")
             logging.info("Backup folder not found; created new folder")
-        
 
-        if backupItems['backupSaves']:
+        if backupItems['saves']:
             logging.info(ltblue + clearLine + "Uploading save files . . ." + reset)
             backupFolder(service, "saves", folderId)
-        if backupItems['backupTray']:
+        if backupItems['Tray']:
             logging.info(ltblue + clearLine + "Uploading tray files . . ." + reset)
             backupFolder(service, "Tray", folderId)
-        if backupItems['backupMods']:
+        if backupItems['Mods']:
             logging.info(ltblue + clearLine + "Uploading mods folder . . ." + reset)
             backupFolder(service, "Mods", folderId)           
-        if backupItems['backupAccountData']:
+        if backupItems['accountDataDB']:
         # backup accountdatadb
         # not checking modified time bc its a small enough file and seems to update every time game is closed
             logging.info(ltblue + clearLine + "Uploading account data file . . ." + reset)
@@ -210,13 +206,13 @@ def promptConfigs(configs):
     change = input()
     if change.lower().strip() == 'y':
         print("Backup saves folder? (y/n)")
-        backupItems['backupSaves'] = input().lower().strip() == 'y'
+        backupItems['saves'] = input().lower().strip() == 'y'
         print("Backup tray folder? (y/n)")
-        backupItems['backupTray'] = input().lower().strip() == 'y'
+        backupItems['Tray'] = input().lower().strip() == 'y'
         print(f"Backup {ACCT_DATA_FILE}? (y/n)")
-        backupItems['backupAccountData'] = input().lower().strip() == 'y'
+        backupItems['accountDataDB'] = input().lower().strip() == 'y'
         print("Backup Mods folder? (y/n)")
-        backupItems['backupMods'] = input().lower().strip() == 'y'
+        backupItems['Mods'] = input().lower().strip() == 'y'
     return configs
 
 
