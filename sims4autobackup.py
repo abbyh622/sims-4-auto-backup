@@ -15,6 +15,7 @@ from googleapiclient.errors import HttpError
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 ACCT_DATA_FILE = "accountDataDB.package"
 DEFAULT_CONFIGS = {"gameDir": "C:\\Users\\abbyh\\Documents\\Electronic Arts\\The Sims 4", "items": {"saves": True, "Tray": False, "accountDataDB": True, "Mods": False}}
+TQDM_FORMAT = "{l_bar}{bar} | {n_fmt}/{total_fmt} {rate_fmt}{postfix}"
 creds = None
 gameDir = os.path.expanduser("~\\Documents\\Electronic Arts\\The Sims 4")   # default game directory, should be universal i think
 
@@ -128,13 +129,8 @@ def authenticateGoogleDrive():
 
 
 # process for saves, tray, and mods folders
-def backupFolder(service, curFolder, mainFolder): 
-
-    if curFolder == "Mods":
-        print(red + "Mods folder backup not yet implemented" + reset)
-        return
-    
-    # check if folder exists, get id and datetime last modified
+def backupFolder(service, curFolder, mainFolder, position=0): 
+    # check if folder exists, get id and datetime last modified, otherwise create folder
     response = service.files().list(q=f"'{mainFolder}' in parents and name='{curFolder}' and mimeType='application/vnd.google-apps.folder' and trashed=false", spaces='drive').execute()
     if response['files']:
         curId = response['files'][0].get("id")
@@ -145,7 +141,6 @@ def backupFolder(service, curFolder, mainFolder):
  
     # get last modified datetime of drive folder
     response = service.files().list(q=f"'{curId}' in parents", spaces='drive', fields="files(modifiedTime)", orderBy="modifiedTime desc").execute()
-
     # convert to timwzone aware datetime object for comparison
     lastModified = response['files'][0].get("modifiedTime") if response['files'] else None
     if lastModified:
@@ -154,31 +149,53 @@ def backupFolder(service, curFolder, mainFolder):
         # set to epoch time if no files in folder
         driveLastModified = datetime.fromtimestamp(0, tz=timezone.utc)
     # print(f"Last backed up: {str(driveLastModified)}") 
-    
-    localFolder = os.path.join(gameDir, curFolder)  # get local folder path             
-    # get number of files in folder for progress bar
-    numFiles = len(os.listdir(localFolder))                                     # dont think this will be right for mods folder bc nested folders
 
-    # use os.scandir() to iterate through each folder 
-    for entry in tqdm.tqdm(os.scandir(localFolder), total=numFiles, position=0):
-        # get last modified time
-        if entry.is_file():
-            localLastModified = datetime.fromtimestamp(os.path.getmtime(entry.path), tz=timezone.utc)
-            # check if file exists in drive
-            response = service.files().list(q=f"'{curId}' in parents and name='{entry.name}' and trashed=false", spaces='drive').execute()
-            # update file
-            if response['files'] and localLastModified > driveLastModified:
-                fileId = response['files'][0].get("id")
-                media = MediaFileUpload(entry.path, resumable=True)
-                service.files().update(fileId=fileId, media_body=media).execute()
-                # print(yellow + f"Updated: {entry.name}" + reset, end = "\r")
-            # upload as new file
-            if not response['files']:
-                fileMetadata = {"name": entry.name, "parents": [curId]}
-                media = MediaFileUpload(entry.path, resumable=True)
-                file = service.files().create(body=fileMetadata, media_body=media, fields="id").execute()
-                # print(yellow + f"Uploaded: {entry.name}" + reset, end = "\r")
-
+    # top level progress bar
+    localFolder = os.path.join(gameDir, curFolder)  # get local folder path 
+    totalFiles = sum(len(files) for _, _, files in os.walk(os.path.join(gameDir, curFolder)))  # count total files recursively
+    with tqdm.tqdm(total=totalFiles, position=position, leave=True, unit="file", bar_format=TQDM_FORMAT) as mainPbar:
+        for root, dirs, files in os.walk(localFolder):
+            # check if folder exists in drive, get id and datetime last modified, otherwise create folder
+            relPath = os.path.relpath(root, localFolder)
+            if relPath == ".":
+                relPath = ""
+            folderId = curId   # reset curFolder to top level folder id
+            if relPath:
+                for dirName in relPath.split(os.sep):
+                    response = service.files().list(q=f"'{folderId}' in parents and name='{dirName}' and mimeType='application/vnd.google-apps.folder' and trashed=false", spaces='drive').execute()
+                    if response['files']:
+                        folderId = response['files'][0].get("id")
+                    else:
+                        metadata = {"name": dirName, "mimeType": "application/vnd.google-apps.folder", "parents": [folderId]}
+                        file = service.files().create(body=metadata, fields="id").execute()
+                        folderId = file.get("id")
+            # process files in current folder
+            if files:
+                # subfolder level progress bar
+                with tqdm.tqdm(total=len(files), desc=os.path.join(curFolder, relPath), position=position+1, leave=False, unit="file", ascii=" /", colour="yellow", bar_format=TQDM_FORMAT) as subPbar:
+                    for file in files:
+                        filePath = os.path.join(root, file)
+                        # get last modified time
+                        localLastModified = datetime.fromtimestamp(os.path.getmtime(filePath), tz=timezone.utc)
+                        # check if file exists in drive
+                        response = service.files().list(q=f"'{folderId}' in parents and name='{file}' and trashed=false", spaces='drive', fields="files(id, modifiedTime)").execute()
+                        if response['files']:
+                            # update file
+                            driveLastModified = datetime.fromisoformat(response['files'][0].get("modifiedTime").replace('Z', '+00:00'))
+                            if localLastModified > driveLastModified:
+                                fileId = response['files'][0].get("id")
+                                media = MediaFileUpload(filePath, resumable=True)
+                                service.files().update(fileId=fileId, media_body=media).execute()
+                                # print(yellow + f"Updated: {os.path.join(relPath, file)}" + reset, end = "\r")
+                        # upload as new file
+                        else:
+                            metadata = {"name": file, "parents": [folderId]}
+                            media = MediaFileUpload(filePath, resumable=True)
+                            service.files().create(body=metadata, media_body=media, fields="id").execute()
+                            # print(yellow + f"Uploaded: {os.path.join(relPath, file)}" + reset, end = "\r")}}
+                        subPbar.update(1)
+                        mainPbar.update(1)
+                            
 
 def promptConfigs(configs):
     global gameDir
